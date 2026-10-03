@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body{width:300px;margin:0;padding:14px;font:13px system-ui,sans-serif;color:#111}
+  h1{font-size:15px;margin:0 0 10px}
+  label{display:block;margin:10px 0 4px;font-weight:600}
+  input[type=password],input[type=text],select{width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #ccc;border-radius:6px}
+  .row{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+  button{padding:7px 10px;border:0;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer;margin-top:10px}
+  button.sec{background:#e5e7eb;color:#111;margin-left:6px}
+  #status{margin-top:8px;color:#16a34a;min-height:16px}
+  .hint{color:#6b7280;font-size:11px;margin-top:8px}
+</style>
+</head>
+<body>
+  <h1>Groq Question Answerer</h1>
+  <div class="row">
+    <strong>Activate extension</strong>
+    <input type="checkbox" id="enabled">
+  </div>
+  <label for="apiKey">Groq API key</label>
+  <input type="password" id="apiKey" placeholder="gsk_...">
+  <label for="model">Model</label>
+  <select id="model">
+    <option value="openai/gpt-oss-20b">gpt-oss-20b (fast)</option>
+    <option value="openai/gpt-oss-120b">gpt-oss-120b (smarter)</option>
+  </select>
+  <div>
+    <button id="save">Save</button>
+    <button id="rescan" class="sec">Rescan page</button>
+    <button id="clearCache" class="sec">Clear cache</button>
+  </div>
+  <div id="status"></div>
+  <div class="hint">Turn it on, then open or reload the website. Answers appear at the top-right. Max 2 API requests per question; answers are cached.</div>
+  <script src="popup.js"></script>
+</body>
+</html>
