@@ -11,10 +11,11 @@
   let enabled = false;
   let observer = null;
   let scanTimer = null;
+  let scanInterval = null;
   let host = null, listEl = null, bodyEl = null;
 
   const seen = new Set();
-  const claimed = new Set();   // elements already used as a question (stops container+child duplicates)
+  const claimed = new Map();   // elements already used as a question (stops container+child duplicates)
   const queue = [];
   let busy = false;
   let asked = 0;
@@ -36,6 +37,7 @@
 
   function start() {
     scheduleScan(300);
+    scanInterval = setInterval(scan, 2500);   // safety net (e.g. missed during a fade-in); costs no API calls
     observer = new MutationObserver(() => scheduleScan(1200));
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -47,6 +49,7 @@
     window.removeEventListener("scroll", onScroll);
     window.removeEventListener("resize", onScroll);
     clearTimeout(scanTimer);
+    clearInterval(scanInterval);
     queue.length = 0;
     host?.remove(); host = listEl = bodyEl = null;
     seen.clear(); claimed.clear(); asked = 0;
@@ -120,6 +123,12 @@
     // ignore tiny frames (ads, trackers); real content frames are large
     if (window.innerWidth < 300 || window.innerHeight < 200) return;
 
+    // Quiz apps (React etc.) REUSE the same elements for the next question.
+    // Release an element once its content is no longer the question it was claimed for.
+    for (const [cel, ckey] of claimed) {
+      if (!cel.isConnected || qkey(norm(cel.textContent || '')) !== ckey) claimed.delete(cel);
+    }
+
     const nodes = deepAll(document.body, CAND_SEL);
     let examined = 0, tier2 = 0;
     for (const el of nodes) {
@@ -132,7 +141,7 @@
 
       // skip anything overlapping an element we already turned into a question
       let overlap = false;
-      for (const q of claimed) { if (q === el || q.contains(el) || el.contains(q)) { overlap = true; break; } }
+      for (const q of claimed.keys()) { if (q === el || q.contains(el) || el.contains(q)) { overlap = true; break; } }
       if (overlap) continue;
 
       // keep only the deepest element that carries (almost) the whole text
@@ -159,7 +168,7 @@
       }
 
       seen.add(key);
-      claimed.add(el);
+      claimed.set(el, key);
       asked++;
       if (options === null) options = text.length < 250 ? gatherOptions(el) : [];
       enqueue({ question: text, options });
