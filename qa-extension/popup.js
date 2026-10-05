@@ -23,7 +23,12 @@ $("save").addEventListener("click", () => {
 
 $("rescan").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "RESCAN" }).catch(() => {});
+  if (tab?.id) {
+    chrome.tabs.sendMessage(tab.id, { type: "RESCAN", showPanel: true }, { frameId: 0 }).catch(() => {
+      $("status").textContent = "Open or reload the page, then try again.";
+      setTimeout(() => ($("status").textContent = ""), 2500);
+    });
+  }
 });
 
 $("clearCache").addEventListener("click", () => {
