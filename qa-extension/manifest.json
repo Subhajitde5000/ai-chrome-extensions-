@@ -5,8 +5,7 @@
   "description": "Detects questions in regular, popup, and fullscreen quiz windows and shows Groq-powered answers.",
   "permissions": [
     "storage",
-    "activeTab",
-    "tabs"
+    "activeTab"
   ],
   "host_permissions": [
     "https://api.groq.com/*"

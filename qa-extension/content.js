@@ -14,8 +14,6 @@
   let scanInterval = null;
   let startTimer = null;
   let host = null, listEl = null, bodyEl = null;
-  let panelClosed = false;
-  let zoomValue = 1;
 
   const seen = new Set();
   const claimed = new Map();   // elements already used as a question (stops container+child duplicates)
@@ -30,14 +28,9 @@
   });
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type === "RESCAN" && enabled) {
-      panelClosed = false;
       seen.clear(); claimed.clear(); asked = 0;
       ensurePanel();
       scheduleScan(100);
-    }
-    if (msg?.type === "SHOW_PANEL" && enabled) {
-      panelClosed = false;
-      ensurePanel();
     }
   });
 
@@ -63,7 +56,6 @@
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", onScroll, { passive: true });
-    window.addEventListener("keydown", onPanelShortcut, true);
     document.addEventListener("fullscreenchange", onFullscreenChange);
   }
 
@@ -71,7 +63,6 @@
     observer?.disconnect(); observer = null;
     window.removeEventListener("scroll", onScroll);
     window.removeEventListener("resize", onScroll);
-    window.removeEventListener("keydown", onPanelShortcut, true);
     document.removeEventListener("fullscreenchange", onFullscreenChange);
     clearTimeout(scanTimer);
     clearTimeout(startTimer);
@@ -79,17 +70,7 @@
     scanInterval = null;
     queue.length = 0;
     host?.remove(); host = listEl = bodyEl = null;
-    panelClosed = false;
     seen.clear(); claimed.clear(); asked = 0;
-  }
-
-  function onPanelShortcut(event) {
-    // Useful in kiosk-style popup windows where the extension toolbar is not
-    // visible. Do not steal ordinary quiz keyboard shortcuts.
-    if (!event.altKey || !event.shiftKey || event.ctrlKey || event.metaKey || event.key.toLowerCase() !== "g") return;
-    event.preventDefault();
-    panelClosed = !panelClosed;
-    ensurePanel();
   }
 
   function onFullscreenChange() {
@@ -265,11 +246,9 @@
   /* ---------- UI: top-right panel in a shadow root ---------- */
   function ensurePanel() {
     if (host) {
-      host.style.display = panelClosed ? "none" : "block";
       mountHost();
       return;
     }
-    if (panelClosed) return;
     host = document.createElement("div");
     host.id = HOST_ID;
     host.style.cssText = "all:initial;display:block;position:fixed;top:16px;right:16px;z-index:2147483647;";
@@ -284,10 +263,6 @@
         .tools{display:flex;align-items:center;gap:2px}
         .bar button{background:none;border:0;color:#9ca3af;cursor:pointer;font-size:15px;line-height:1;padding:4px;margin:0;border-radius:4px}
         .bar button:hover,.bar button:focus-visible{color:#fff;background:#374151}
-        .zoom{display:flex;align-items:center;gap:4px;padding:5px 8px;color:#9ca3af;border-bottom:1px solid #374151;font-size:11px}
-        .zoom button{background:#374151;border:0;color:#f3f4f6;border-radius:4px;cursor:pointer;padding:3px 7px;font-size:13px;line-height:1}
-        .zoom button:hover,.zoom button:focus-visible{background:#4b5563}
-        .zoom-value{min-width:38px;text-align:center}
         .body{overflow:auto;padding:8px}
         .collapsed .body{display:none}
         .card{background:#1f2937;border-radius:8px;padding:8px 10px;margin-bottom:8px}
@@ -303,15 +278,7 @@
           <span class="tools">
             <button id="min" title="Minimize answers">–</button>
             <button id="clr" title="Clear answers">⟲</button>
-            <button id="hide" title="Hide answer panel">×</button>
           </span>
-        </div>
-        <div class="zoom" aria-label="Page zoom controls">
-          <span>Page zoom</span>
-          <button id="zoomOut" title="Zoom out">−</button>
-          <span class="zoom-value" id="zoomValue">100%</span>
-          <button id="zoomIn" title="Zoom in">+</button>
-          <button id="zoomReset" title="Reset zoom">Reset</button>
         </div>
         <div class="body" id="body"><div class="empty" id="empty">Looking for questions…</div></div>
       </div>`;
@@ -325,28 +292,6 @@
       bodyEl.querySelectorAll(".card").forEach((c) => c.remove());
       queue.length = 0; seen.clear(); claimed.clear(); asked = 0; scheduleScan(100);
     };
-    root.getElementById("hide").onclick = () => {
-      panelClosed = true;
-      host.style.display = "none";
-      queue.length = 0;
-    };
-
-    const zoomLabel = root.getElementById("zoomValue");
-    const updateZoomLabel = (value) => {
-      zoomValue = Number(value) || 1;
-      zoomLabel.textContent = `${Math.round(zoomValue * 100)}%`;
-    };
-    const changeZoom = (value) => {
-      chrome.runtime.sendMessage({ type: "SET_ZOOM", zoom: value }).then((res) => {
-        if (res?.zoom) updateZoomLabel(res.zoom);
-      }).catch(() => {});
-    };
-    root.getElementById("zoomOut").onclick = () => changeZoom(zoomValue - 0.1);
-    root.getElementById("zoomIn").onclick = () => changeZoom(zoomValue + 0.1);
-    root.getElementById("zoomReset").onclick = () => changeZoom(1);
-    chrome.runtime.sendMessage({ type: "GET_ZOOM" }).then((res) => {
-      if (res?.zoom) updateZoomLabel(res.zoom);
-    }).catch(() => {});
   }
 
   function addCard(question) {

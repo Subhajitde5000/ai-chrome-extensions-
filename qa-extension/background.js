@@ -96,36 +96,10 @@ async function save(cache) {
   await chrome.storage.local.set({ qaCache: cache });
 }
 
-// The answer panel lives inside the page. In a popup/kiosk window there may be
-// no browser zoom controls, so let the panel proxy the tab zoom API through the
-// service worker (content scripts cannot call chrome.tabs directly).
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 5;
-
-function clampZoom(value) {
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(value) || 1));
-}
-
 // One request at a time across ALL tabs/frames (also avoids bursts and duplicate frames)
 let chain = Promise.resolve();
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type === "GET_ZOOM" || msg?.type === "SET_ZOOM") {
-    const tabId = sender.tab?.id;
-    if (typeof tabId !== "number") {
-      sendResponse({ error: "Zoom is unavailable in this page." });
-      return false;
-    }
-
-    const operation = msg.type === "GET_ZOOM"
-      ? chrome.tabs.getZoom(tabId)
-      : chrome.tabs.setZoom(tabId, clampZoom(msg.zoom)).then(() => chrome.tabs.getZoom(tabId));
-    operation.then((zoom) => sendResponse({ zoom }), (error) => {
-      sendResponse({ error: error?.message || "Unable to change page zoom." });
-    });
-    return true;
-  }
-
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "ASK") {
     chain = chain.then(() => handle(msg.payload)).then(sendResponse, (e) => sendResponse({ error: e.message }));
     return true; // async response
