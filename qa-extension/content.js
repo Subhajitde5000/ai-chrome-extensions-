@@ -12,6 +12,7 @@
   let observer = null;
   let scanTimer = null;
   let scanInterval = null;
+  let startTimer = null;
   let host = null, listEl = null, bodyEl = null;
 
   const seen = new Set();
@@ -26,9 +27,15 @@
     if (area === "local" && changes.enabled) setEnabled(!!changes.enabled.newValue);
   });
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg?.type === "RESCAN" && enabled) { seen.clear(); claimed.clear(); asked = 0; scheduleScan(100); }
+    if (msg?.type === "RESCAN" && enabled) {
+      seen.clear(); claimed.clear(); asked = 0;
+      ensurePanel();
+      scheduleScan(100);
+    }
   });
 
+  // A popup opened with window.open("") can briefly have no body. Waiting here
+  // keeps the extension alive in that window instead of silently missing it.
   function setEnabled(on) {
     if (on === enabled) return;
     enabled = on;
@@ -36,23 +43,47 @@
   }
 
   function start() {
+    if (!enabled || observer || scanInterval) return;
+    if (!document.body) {
+      clearTimeout(startTimer);
+      startTimer = setTimeout(start, 50);
+      return;
+    }
+    clearTimeout(startTimer);
     scheduleScan(300);
     scanInterval = setInterval(scan, 2500);   // safety net (e.g. missed during a fade-in); costs no API calls
     observer = new MutationObserver(() => scheduleScan(1200));
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", onScroll, { passive: true });
+    document.addEventListener("fullscreenchange", onFullscreenChange);
   }
 
   function stop() {
     observer?.disconnect(); observer = null;
     window.removeEventListener("scroll", onScroll);
     window.removeEventListener("resize", onScroll);
+    document.removeEventListener("fullscreenchange", onFullscreenChange);
     clearTimeout(scanTimer);
+    clearTimeout(startTimer);
     clearInterval(scanInterval);
+    scanInterval = null;
     queue.length = 0;
     host?.remove(); host = listEl = bodyEl = null;
     seen.clear(); claimed.clear(); asked = 0;
+  }
+
+  function onFullscreenChange() {
+    mountHost();
+    scheduleScan(100);
+  }
+
+  // A document fullscreen element is the only part of a page rendered in
+  // fullscreen. Move our host inside it so the answer panel remains visible.
+  function mountHost() {
+    if (!host) return;
+    const target = document.fullscreenElement || document.documentElement;
+    if (target && host.parentNode !== target) target.appendChild(host);
   }
 
   function onScroll() { scheduleScan(700); }
@@ -81,13 +112,26 @@
   }
 
   function norm(s) { return s.replace(/\s+/g, " ").trim(); }
+  // Prefer visible text, but keep accessible quiz widgets usable when their
+  // prompt/choice is exposed through aria-label or a data attribute instead.
+  function readableText(el) {
+    return norm(
+      el.textContent ||
+      el.getAttribute("aria-label") ||
+      el.getAttribute("data-question") ||
+      el.getAttribute("title") ||
+      el.getAttribute("value") ||
+      "",
+    );
+  }
   // Stable key: letters/digits only, first 80 chars -> ignores timers, spacing, trailing changes
   function qkey(s) { return s.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 80); }
 
   const NAV_LABELS = /^(next|previous|prev|back|submit|skip|continue|check|finish|restart|retry|start|close|ok|cancel|done|reset|home|menu|login|log in|sign in|sign up)$/i;
   const OPTION_SEL =
-    'label, li, button, [role="button"], [role="radio"], [role="option"], [role="checkbox"], input[type="radio"] + *, input[type="checkbox"] + *';
-  const CAND_SEL = "p, li, h1, h2, h3, h4, h5, h6, label, legend, span, div, td, th, b, strong, em";
+    'label, li, button, [role="button"], [role="radio"], [role="option"], [role="checkbox"], [tabindex]:not([tabindex="-1"]), input[type="radio"], input[type="checkbox"], input[type="radio"] + *, input[type="checkbox"] + *';
+  const CAND_SEL =
+    "p, li, h1, h2, h3, h4, h5, h6, label, legend, span, div, td, th, b, strong, em, [role='heading'], [data-question], [tabindex]";
 
   // querySelectorAll that also walks into open shadow roots
   function deepAll(root, sel, out = []) {
@@ -96,20 +140,30 @@
     return out;
   }
 
+  function parentFor(node) {
+    if (node.parentElement) return node.parentElement;
+    const root = node.getRootNode?.();
+    return root?.host || null;
+  }
+
   function gatherOptions(el) {
     let node = el;
     for (let depth = 0; depth < 5 && node && node !== document.body; depth++) {
-      node = node.parentElement;
+      node = parentFor(node);
       if (!node) break;
       const texts = [];
-      for (const o of node.querySelectorAll(OPTION_SEL)) {
+      // A number of quiz engines use plain divs with tabindex="1" instead of
+      // buttons or radio roles. Search open shadow roots too, because those
+      // controls are common in embedded/fullscreen quiz widgets.
+      for (const o of deepAll(node, OPTION_SEL)) {
         if (o.contains(el) || el.contains(o)) continue;
         // options normally come after the question text
         if (!(el.compareDocumentPosition(o) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-        const t = norm(o.textContent || "");
+        const t = readableText(o);
         if (!t || t.length > 200 || NAV_LABELS.test(t) || texts.includes(t)) continue;
+        if (o.getAttribute("aria-disabled") === "true" || o.hasAttribute("disabled")) continue;
         // skip wrappers that merely contain other options
-        if (o.querySelector(OPTION_SEL) && t.length > 60) continue;
+        if (deepAll(o, OPTION_SEL).length && t.length > 60) continue;
         texts.push(t);
         if (texts.length > 10) break;
       }
@@ -126,7 +180,7 @@
     // Quiz apps (React etc.) REUSE the same elements for the next question.
     // Release an element once its content is no longer the question it was claimed for.
     for (const [cel, ckey] of claimed) {
-      if (!cel.isConnected || qkey(norm(cel.textContent || '')) !== ckey) claimed.delete(cel);
+      if (!cel.isConnected || qkey(readableText(cel)) !== ckey) claimed.delete(cel);
     }
 
     const nodes = deepAll(document.body, CAND_SEL);
@@ -136,7 +190,7 @@
       if (el.closest("#" + HOST_ID)) continue;
       if (el.closest("script, style, noscript, textarea, input, nav, footer, code, pre, button, [role='button']")) continue;
 
-      const text = norm(el.textContent || "");
+      const text = readableText(el);
       if (text.length < 12 || text.length > 500) continue;
 
       // skip anything overlapping an element we already turned into a question
@@ -203,20 +257,24 @@
 
   /* ---------- UI: top-right panel in a shadow root ---------- */
   function ensurePanel() {
-    if (host) return;
+    if (host) {
+      mountHost();
+      return;
+    }
     host = document.createElement("div");
     host.id = HOST_ID;
-    host.style.cssText = "all:initial;position:fixed;top:16px;right:16px;z-index:2147483647;";
+    host.style.cssText = "all:initial;display:block;position:fixed;top:16px;right:16px;z-index:2147483647;";
     const root = host.attachShadow({ mode: "open" });
     root.innerHTML = `
       <style>
-        .panel{width:340px;max-height:70vh;display:flex;flex-direction:column;background:#111827;color:#f3f4f6;
+        .panel{width:min(340px,calc(100vw - 24px));max-height:min(70vh,calc(100vh - 24px));display:flex;flex-direction:column;background:#111827;color:#f3f4f6;
           font:13px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;border-radius:12px;
           box-shadow:0 10px 30px rgba(0,0,0,.35);border:1px solid #374151;overflow:hidden}
-        .bar{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#1f2937;
+        .bar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;background:#1f2937;
           font-weight:600;cursor:default}
-        .bar button{background:none;border:0;color:#9ca3af;cursor:pointer;font-size:16px;margin-left:6px}
-        .bar button:hover{color:#fff}
+        .tools{display:flex;align-items:center;gap:2px}
+        .bar button{background:none;border:0;color:#9ca3af;cursor:pointer;font-size:15px;line-height:1;padding:4px;margin:0;border-radius:4px}
+        .bar button:hover,.bar button:focus-visible{color:#fff;background:#374151}
         .body{overflow:auto;padding:8px}
         .collapsed .body{display:none}
         .card{background:#1f2937;border-radius:8px;padding:8px 10px;margin-bottom:8px}
@@ -229,10 +287,15 @@
       </style>
       <div class="panel" id="panel">
         <div class="bar"><span>Groq Answers</span>
-          <span><button id="min" title="Minimize">–</button><button id="clr" title="Clear">⟲</button></span></div>
+          <span class="tools">
+            <button id="min" title="Minimize answers">–</button>
+            <button id="clr" title="Clear answers">⟲</button>
+          </span>
+        </div>
         <div class="body" id="body"><div class="empty" id="empty">Looking for questions…</div></div>
       </div>`;
     document.documentElement.appendChild(host);
+    mountHost();
     bodyEl = root.getElementById("body");
     listEl = bodyEl;
     const panel = root.getElementById("panel");
