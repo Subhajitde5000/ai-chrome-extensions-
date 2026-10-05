@@ -112,12 +112,24 @@
   }
 
   function norm(s) { return s.replace(/\s+/g, " ").trim(); }
+  // Prefer visible text, but keep accessible quiz widgets usable when their
+  // prompt/choice is exposed through aria-label or a data attribute instead.
+  function readableText(el) {
+    return norm(
+      el.textContent ||
+      el.getAttribute("aria-label") ||
+      el.getAttribute("data-question") ||
+      el.getAttribute("title") ||
+      el.getAttribute("value") ||
+      "",
+    );
+  }
   // Stable key: letters/digits only, first 80 chars -> ignores timers, spacing, trailing changes
   function qkey(s) { return s.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 80); }
 
   const NAV_LABELS = /^(next|previous|prev|back|submit|skip|continue|check|finish|restart|retry|start|close|ok|cancel|done|reset|home|menu|login|log in|sign in|sign up)$/i;
   const OPTION_SEL =
-    'label, li, button, [role="button"], [role="radio"], [role="option"], [role="checkbox"], [tabindex]:not([tabindex="-1"]), input[type="radio"] + *, input[type="checkbox"] + *';
+    'label, li, button, [role="button"], [role="radio"], [role="option"], [role="checkbox"], [tabindex]:not([tabindex="-1"]), input[type="radio"], input[type="checkbox"], input[type="radio"] + *, input[type="checkbox"] + *';
   const CAND_SEL =
     "p, li, h1, h2, h3, h4, h5, h6, label, legend, span, div, td, th, b, strong, em, [role='heading'], [data-question], [tabindex]";
 
@@ -147,7 +159,7 @@
         if (o.contains(el) || el.contains(o)) continue;
         // options normally come after the question text
         if (!(el.compareDocumentPosition(o) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-        const t = norm(o.textContent || "");
+        const t = readableText(o);
         if (!t || t.length > 200 || NAV_LABELS.test(t) || texts.includes(t)) continue;
         if (o.getAttribute("aria-disabled") === "true" || o.hasAttribute("disabled")) continue;
         // skip wrappers that merely contain other options
@@ -168,7 +180,7 @@
     // Quiz apps (React etc.) REUSE the same elements for the next question.
     // Release an element once its content is no longer the question it was claimed for.
     for (const [cel, ckey] of claimed) {
-      if (!cel.isConnected || qkey(norm(cel.textContent || '')) !== ckey) claimed.delete(cel);
+      if (!cel.isConnected || qkey(readableText(cel)) !== ckey) claimed.delete(cel);
     }
 
     const nodes = deepAll(document.body, CAND_SEL);
@@ -178,7 +190,7 @@
       if (el.closest("#" + HOST_ID)) continue;
       if (el.closest("script, style, noscript, textarea, input, nav, footer, code, pre, button, [role='button']")) continue;
 
-      const text = norm(el.textContent || "");
+      const text = readableText(el);
       if (text.length < 12 || text.length > 500) continue;
 
       // skip anything overlapping an element we already turned into a question

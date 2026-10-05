@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Groq Question Answerer",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Detects questions in regular, popup, and fullscreen quiz windows and shows Groq-powered answers.",
   "permissions": [
     "storage",
